@@ -1,0 +1,10 @@
+boto3
+streamlit
+uuid
+langchain
+langchain-aws
+langchain-community
+PyMuPDF
+faiss-cpu
+pypdf
+fpdf
