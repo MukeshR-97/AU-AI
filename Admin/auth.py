@@ -1,72 +1,70 @@
+# main.py (runs on port 8080)
 import streamlit as st
-import json
-import os
+import boto3
+from botocore.exceptions import ClientError
+import hashlib
 
-# Save credentials file relative to this script
-CREDENTIALS_FILE = os.path.join(os.path.dirname(__file__), "credentials.json")
+# Initialize DynamoDB
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')  # Update region if needed
+users_table = dynamodb.Table('users')
 
-def load_users():
-    if not os.path.exists(CREDENTIALS_FILE):
-        with open(CREDENTIALS_FILE, "w") as f:
-            json.dump({}, f)
-        return {}
-
-    try:
-        with open(CREDENTIALS_FILE, "r") as file:
-            content = file.read().strip()
-            if not content:
-                return {}
-            return json.loads(content)
-    except (json.JSONDecodeError, IOError):
-        # If corrupted, reinitialize
-        with open(CREDENTIALS_FILE, "w") as f:
-            json.dump({}, f)
-        return {}
-
-def save_users(users):
-    with open(CREDENTIALS_FILE, "w") as file:
-        json.dump(users, file, indent=4)
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 def register():
-    st.subheader("👤 Register")
-    username = st.text_input("Username", key="reg_username")
-    password = st.text_input("Password", type="password", key="reg_password")
-    confirm_password = st.text_input("Confirm Password", type="password", key="reg_confirm")
-    role = st.selectbox("Role", ["admin", "user"], key="reg_role")
+    st.title("Register")
+    name = st.text_input("Name")
+    email = st.text_input("Email")
+    role = st.selectbox("Role", ["admin", "user"])
+    password = st.text_input("Password", type="password")
 
-    if st.button("Register", key="reg_button"):
-        users = load_users()
-
-        if not username or not password or not confirm_password:
-            st.warning("⚠️ Please fill all fields.")
-        elif password != confirm_password:
-            st.error("❌ Passwords do not match.")
-        elif username in users:
-            st.error("❌ Username already exists.")
-        else:
-            users[username] = {"password": password, "role": role}
-            save_users(users)
-            st.success("✅ Registered successfully. Please login.")
-            st.info(f"📁 Credentials saved to: {CREDENTIALS_FILE}")
+    if st.button("Register"):
+        try:
+            # Check if user already exists
+            response = users_table.get_item(Key={'email': email})
+            if 'Item' in response:
+                st.error("User already exists!")
+                return
+            
+            # Create new user
+            users_table.put_item(
+                Item={
+                    'email': email,
+                    'name': name,
+                    'role': role,
+                    'password': hash_password(password)
+                }
+            )
+            st.success("Registered successfully! Please login.")
+        except ClientError as e:
+            st.error(f"Error registering user: {e.response['Error']['Message']}")
 
 def login():
-    st.subheader("🔐 Login")
-    username = st.text_input("Username", key="login_username")
-    password = st.text_input("Password", type="password", key="login_password")
+    st.title("Login")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
 
-    if st.button("Login", key="login_button"):
-        users = load_users()
-        user = users.get(username)
-        if user and user["password"] == password:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.role = user["role"]
-            st.success(f"✅ Welcome back, {username}!")
-        else:
-            st.error("❌ Invalid credentials.")
+    if st.button("Login"):
+        try:
+            response = users_table.get_item(Key={'email': email})
+            user = response.get('Item')
+            if user and user['password'] == hash_password(password):
+                st.success(f"Welcome {user['name']}! Redirecting...")
 
-def logout():
-    st.session_state.logged_in = False
-    st.session_state.username = ""
-    st.session_state.role = ""
-    st.success("👋 Logged out successfully.")
+                # Store user in session state
+                st.session_state.user = user
+
+                if user["role"] == "admin":
+                    st.markdown("[Go to Admin Dashboard](http://13.234.186.216:8083)")
+                else:
+                    st.markdown("[Go to User Dashboard](http://13.234.186.216:8084)")
+            else:
+                st.error("Invalid credentials!")
+        except ClientError as e:
+            st.error(f"Error logging in: {e.response['Error']['Message']}")
+
+page = st.sidebar.selectbox("Choose action", ["Login", "Register"])
+if page == "Register":
+    register()
+else:
+    login()
