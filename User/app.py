@@ -3,7 +3,6 @@ import boto3
 import os
 from fpdf import FPDF
 from io import BytesIO
-import uuid
 import re
 
 # ---------- AWS Configuration ----------
@@ -46,8 +45,43 @@ def fix_section_formatting(exam_text):
 # ---------- Extract units ----------
 def extract_units_from_knowledge_base(subject):
     input_query = {
-        "text": f"List only the chapters or units in the syllabus for the subject '{subject}'. Return each unit on a new line like: Unit 1: ..., Unit 2: ..."
+       "text": f"""
+You are an academic assistant trained to extract information **exactly as written** from textbooks, scans, or PDFs.
+
+Your task is to extract and return the full list of **chapter or unit titles in the exact order, wording, and formatting** as shown in **{subject}**.
+
+Focus only on sections labeled:
+- **Contents**
+- **Table of Contents**
+- **Brief Contents**
+- **Extended Chapter Material**
+- Or any clearly numbered list of chapters/units
+
+Ignore sections like:
+- Preface
+- Appendices
+- Lab manuals
+- Interview questions
+- Index (unless it lists chapters)
+
+Extraction Rules:
+- Return the chapter or unit titles **in the exact order, wording, and formatting** as shown in **{subject}**
+- **Do NOT** rewrite, summarize, interpret, or change the chapter names
+- **Do NOT** add topics that are not explicitly listed
+- **Do NOT** merge or split titles
+- **Do NOT** skip any chapters — return all, even if there are more than 16
+
+Output format:
+1. [Exact title from source]  
+2. [Exact title from source]  
+...  
+N. [Exact title from source]
+
+Final output:
+**Only return the list of chapters or units, exactly as shown in the textbook {subject}, without any changes, additions, or explanations.**
+"""
     }
+
     query = {
         "input": input_query,
         "retrieveAndGenerateConfiguration": {
@@ -58,10 +92,11 @@ def extract_units_from_knowledge_base(subject):
             }
         }
     }
+
     try:
         response = bedrock_agent_runtime.retrieve_and_generate(**query)
         full_text = response.get('output', {}).get('text', "")
-        raw_units = re.findall(r"(Chapter\s\d+:.*?|Unit\s\d+:.*?)\s*(?=Chapter\s\d+:|Unit\s\d+:|\Z)", full_text, re.DOTALL)
+        raw_units = re.findall(r"\d+\.\s+.+", full_text)
         return [unit.strip() for unit in raw_units if unit.strip()]
     except Exception as e:
         st.error(f"❌ Error extracting units: {str(e)}")
@@ -166,10 +201,11 @@ def main():
     if st.session_state.units:
         st.markdown("### 📦 Select Chapters/Units")
         selected_units = []
-        for unit in st.session_state.units:
+
+        for i, unit in enumerate(st.session_state.units):
             col1, col2 = st.columns([6, 1])
             col1.markdown(f'<div class="unit-box">{unit}</div>', unsafe_allow_html=True)
-            if col2.checkbox("", key=unit):
+            if col2.checkbox("Select", key=f"unit_{i}", label_visibility="collapsed"):
                 selected_units.append(unit)
 
         if selected_units:

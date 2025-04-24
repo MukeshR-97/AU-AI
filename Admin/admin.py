@@ -27,17 +27,24 @@ def save_uploaded_file(uploaded_file, save_path):
     try:
         with open(save_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
+        return True
     except Exception as e:
         st.error(f"❌ Error saving file: {e}")
+        return False
 
 # Upload to S3
 def upload_file_to_s3(local_path, s3_key):
     try:
+        if not os.path.exists(local_path):
+            st.error("❌ Local file not found for upload.")
+            return False
+
         s3_client.upload_file(Filename=local_path, Bucket=BUCKET_NAME, Key=s3_key)
-        st.success("✅ File successfully uploaded to S3!")
+        st.success(f"✅ File uploaded to S3 at: `s3://{BUCKET_NAME}/{s3_key}`")
+        return True
     except Exception as e:
         st.error(f"❌ Error uploading file to S3: {e}")
-        raise
+        return False
 
 # Wait for ongoing job to complete
 def wait_for_ongoing_job_to_complete():
@@ -86,10 +93,8 @@ def track_ingestion_job(job_id):
 
 # Streamlit UI
 def main():
+    st.set_page_config(page_title="Syllabus Uploader", layout="centered")
     st.title("📂 Admin Panel - Upload & Sync Syllabus with Bedrock")
-
-    # Debug UI
-    st.write("✅ Streamlit UI loaded successfully.")
 
     uploaded_file = st.file_uploader("📄 Upload Syllabus PDF", type="pdf")
     subject_name_input = st.text_input("📘 Enter Subject Name (no spaces)", "")
@@ -104,29 +109,28 @@ def main():
 
         syllabus_filename = f"{subject_name}.pdf"
         local_path = os.path.join(FOLDER_PATH, syllabus_filename)
+        s3_key = f"knowledgebase/{subject_name}/{syllabus_filename}"
 
         with st.spinner("🔄 Saving and uploading file..."):
-            save_uploaded_file(uploaded_file, local_path)
-            s3_key = f"knowledgebase/{subject_name}/{syllabus_filename}"
-            upload_file_to_s3(local_path, s3_key)
+            if save_uploaded_file(uploaded_file, local_path):
+                if upload_file_to_s3(local_path, s3_key):
+                    # Clean up local file
+                    if os.path.exists(local_path):
+                        os.remove(local_path)
 
-            # Clean up local file
-            if os.path.exists(local_path):
-                os.remove(local_path)
+                    st.info("📡 Starting ingestion with Bedrock Knowledge Base...")
+                    job_id = sync_knowledge_base()
 
-        st.info("📡 Starting ingestion with Bedrock Knowledge Base...")
-        job_id = sync_knowledge_base()
-
-        if job_id:
-            with st.status("🔄 Syncing with Bedrock...", expanded=True) as status_box:
-                for state in track_ingestion_job(job_id):
-                    status_box.update(label=f"📡 Ingestion Status: `{state}`", state="running")
-                if state == "COMPLETE":
-                    status_box.update(label="✅ Ingestion Complete!", state="complete")
-                else:
-                    status_box.update(label=f"❌ Ingestion Failed (Status: {state})", state="error")
-        else:
-            st.error("❌ Could not start ingestion. Another job might still be running. Please try again shortly.")
+                    if job_id:
+                        with st.status("🔄 Syncing with Bedrock...", expanded=True) as status_box:
+                            for state in track_ingestion_job(job_id):
+                                status_box.update(label=f"📡 Ingestion Status: `{state}`", state="running")
+                            if state == "COMPLETE":
+                                status_box.update(label="✅ Ingestion Complete!", state="complete")
+                            else:
+                                status_box.update(label=f"❌ Ingestion Failed (Status: {state})", state="error")
+                    else:
+                        st.error("❌ Could not start ingestion. Another job might still be running. Please try again shortly.")
 
 # Entry point
 if __name__ == "__main__":
