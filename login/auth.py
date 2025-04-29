@@ -134,9 +134,9 @@ def login():
 
                     # Define URLs based on the role
                     if role == "admin":
-                        redirect_url = "http://13.234.186.216:8083"
+                        redirect_url = "http://13.203.229.21/:8083"
                     elif role == "user":
-                        redirect_url = "http://13.234.186.216:8084"
+                        redirect_url = "http://13.203.229.21/:8084"
                     
                     # Redirect to the specific dashboard URL
                     st.markdown(f'<a href="{redirect_url}" target="_self">Go to {role.capitalize()} Dashboard</a>', unsafe_allow_html=True)

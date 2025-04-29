@@ -100,7 +100,7 @@ Begin extraction below:
         raw_units = re.findall(r"\d+\.\s+.+", full_text)
         return [unit.strip() for unit in raw_units if unit.strip()]
     except Exception as e:
-        st.error(f"❌ Error extracting units: {str(e)}")
+        st.error(f"Error extracting units: {str(e)}")
         return []
 
 # ---------- Question Generator ----------
@@ -109,53 +109,53 @@ def generate_exam_questions(subject, selected_units, part_a_count, part_b_count,
     "text": f'''
 You are an expert academic assistant.
 
-Your task is to generate a university-level exam paper for the subject: "{subject}", using ONLY the following chapters or units:
+Generate a **university-level question paper** based on the syllabus for the subject: "{subject}".
+
+Follow **Anna University exam format**, strictly adhering to these rules:
+
+---
+**INSTRUCTIONS:**
+- Use ONLY these selected chapters/units:
 {', '.join(selected_units)}
 
-The format must strictly follow **Anna University pattern**:
+- Follow this structure:
+  • Part A: {part_a_count} questions, 2 marks each  
+  • Part B: {part_b_count} questions, 6 marks each  
+  • Part C: {part_c_count} questions, 10 marks each
 
-Instructions:
-- Include exactly:
-  • Part A: {part_a_count} questions (2 marks each)
-  • Part B: {part_b_count} questions (6 marks each)
-  • Part C: {part_c_count} questions (10 marks each)
+- Spread the questions evenly across the selected units.
 
-- Distribute the questions across the selected units fairly.
 - Use this Bloom’s Taxonomy distribution:
 {bloom_distribution_text}
 
-- Important formatting rules:
-  • Use plain text only (no markdown, no JSON)
-  • Each section must be clearly separated by two line breaks
-  • Each section should begin with:
-    Part A (2 marks each)
-    Part B (6 marks each)
-    Part C (10 marks each)
+---
+**FORMATTING RULES (STRICT):**
 
-  • Questions must be numbered **1. 2. 3.** per part (reset numbering in each part)
-  • Avoid answers or explanations — generate only questions
-  • Use clear, academic language
-  • Use LaTeX notation **only** for formulas if necessary
+Use **this exact layout** with **clear spacing and numbering**:
 
-Output Example:
+Part A (2 marks each)  
+1. Question one text  
+2. Question two text  
+...  
 
-Part A (2 marks each)
+Part B (6 marks each)  
+1. Question one text  
+2. Question two text  
+...
 
-1. Define the term "..."
-2. What is the purpose of...?
+Part C (10 marks each)  
+1. Question one text  
+...
 
-Part B (6 marks each)
+Important:
+- Each section must begin **exactly** with the header: `Part A (2 marks each)` / `Part B (6 marks each)` / `Part C (10 marks each)`
+- Each question must appear on its own line and be clearly numbered.
+- Add **one empty line between questions** for readability.
+- Do **not** merge questions into paragraphs.
+- Use LaTeX formatting for any mathematical expressions.
 
-1. Discuss...
-2. Explain...
-
-Part C (10 marks each)
-
-1. Compare and contrast...
-2. Describe and analyze...
-
-Output:
-Only the full question paper text, correctly formatted.
+---
+Return only the formatted question paper as plain text. Do **not** include explanations, context, or additional instructions.
 '''
 }
 
@@ -180,55 +180,24 @@ Only the full question paper text, correctly formatted.
 # ---------- Answer Generator ----------
 def generate_answers_for_questions(subject, questions_text, knowledge_base_id, model_arn):
     input_query = {
-    "text": f'''
-You are an academic expert.
+        "text": f'''
+You are an expert academician.
 
-Using the uploaded textbook material for "{subject}", generate a detailed answer key for the following university-level exam paper.
+Using the uploaded textbook material for "{subject}", generate a detailed answer key for the following exam questions.
 
 Instructions:
-- Organize the answer key into **Part A**, **Part B**, and **Part C** exactly as the questions are grouped.
-- Match the question numbers exactly as provided.
-- Each answer must begin with:
-  [Question X]
-  Answer: ...
-- Use LaTeX formatting only when needed for math, formulas, or diagrams.
-- Keep answers concise, accurate, and well-structured.
-- Do not generate new questions or alter any wording.
-- Preserve question formatting (don't renumber or rewrite).
-- Use plain text formatting only.
+- Keep answers clear, precise, and concise.
+- Organize answer sections the same as question sections (Part A, Part B, Part C).
+- Maintain the same question numbering.
+- Use LaTeX formatting where needed.
 
-Question Paper:
+Questions:
 {questions_text}
 
-Output Format:
-
-Part A: Short Answer Questions
-
-[Question 1]
-Answer: ...
-
-[Question 2]
-Answer: ...
-
-...
-
-Part B: Long Answer Questions
-
-[Question 1]
-Answer: ...
-
-...
-
-Part C: Application-Based Questions
-
-[Question 1]
-Answer: ...
-
-...
-
-Only return the full answer key as plain text.
+Output:
+- ONLY answers clearly organized by parts and numbering.
 '''
-}
+    }
 
     query = {
         "input": input_query,
@@ -269,7 +238,7 @@ def main():
 
     with st.container():
         st.title("AI-Driven University Question Paper & Answer Key Generator")
-    
+
     generate = False
     if "units" not in st.session_state:
         st.session_state.units = []
