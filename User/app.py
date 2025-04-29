@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as st 
 import boto3
 import os
 from fpdf import FPDF
@@ -7,25 +7,26 @@ import re
 
 # ---------- AWS Configuration ----------
 aws_region = "us-east-1"
-bucket_name = os.getenv("BUCKET_NAME")
+bucket_name = os.getenv("BUCKET_NAME")  # Optional if you use S3 for something
 knowledge_base_id = "NRQ5XMNDMI"
-model_arn = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+model_arn = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-sonnet-20240229-v1:0"
+model_arn2 = "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
 bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=aws_region)
 
-# ---------- Enhanced PDF converter ----------
+# ---------- PDF Generator ----------
 class PDF(FPDF):
     def header(self):
         self.set_font("Arial", 'B', 14)
-        self.cell(0, 10, self.title, align="C", ln=1)
+        self.cell(0, 10, self.title, align="C", ln=True)
 
     def footer(self):
         self.set_y(-15)
         self.set_font("Arial", "I", 8)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
-def convert_text_to_pdf(subject, text):
+def convert_text_to_pdf(subject, text, title="Document"):
     pdf = PDF()
-    pdf.set_title(subject)
+    pdf.set_title(title)
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_font("Arial", size=12)
@@ -38,11 +39,11 @@ def convert_text_to_pdf(subject, text):
     pdf_output.seek(0)
     return pdf_output
 
-# ---------- Fix formatting ----------
+# ---------- Formatting Helper ----------
 def fix_section_formatting(exam_text):
     return re.sub(r'\s*(Part [ABC] \(\d+ marks.*?\))', r'\n\n\1\n', exam_text).strip()
 
-# ---------- Extract units ----------
+# ---------- Unit Extractor ----------
 def extract_units_from_knowledge_base(subject):
     input_query = {
        "text": f"""
@@ -55,30 +56,25 @@ Focus only on sections labeled:
 - **Table of Contents**
 - **Brief Contents**
 - **Extended Chapter Material**
-- Or any clearly numbered list of chapters/units
 
 Ignore sections like:
 - Preface
 - Appendices
 - Lab manuals
 - Interview questions
-- Index (unless it lists chapters)
+- Index
 
-Extraction Rules:
-- Return the chapter or unit titles **in the exact order, wording, and formatting** as shown in **{subject}**
-- **Do NOT** rewrite, summarize, interpret, or change the chapter names
-- **Do NOT** add topics that are not explicitly listed
-- **Do NOT** merge or split titles
-- **Do NOT** skip any chapters — return all, even if there are more than 16
+Rules:
+- Return the titles **exactly as shown** — no changes.
+- No summarization or interpretation.
+- List ALL chapters/units even if there are more than 16.
 
 Output format:
-1. [Exact title from source]  
-2. [Exact title from source]  
-...  
-N. [Exact title from source]
+1. [Exact title]  
+2. [Exact title]  
+... 
 
-Final output:
-**Only return the list of chapters or units, exactly as shown in the textbook {subject}, without any changes, additions, or explanations.**
+Only return the list — no explanations.
 """
     }
 
@@ -102,30 +98,106 @@ Final output:
         st.error(f"❌ Error extracting units: {str(e)}")
         return []
 
-# ---------- Generate Questions ----------
-def generate_exam_questions(subject, selected_units, part_a_count, part_b_count, part_c_count):
+# ---------- Question Generator ----------
+def generate_exam_questions(subject, selected_units, part_a_count, part_b_count, part_c_count, bloom_distribution_text):
     input_query = {
         "text": f'''
-Based on the syllabus/study material for "{subject}", generate a university exam following the Anna University format.
+Based on the syllabus/study material for "{subject}", generate a university exam paper following Anna University format.
 
 Instructions:
 - Strictly include:
   • Part A: {part_a_count} questions (2 marks each)
   • Part B: {part_b_count} questions (6 marks each)
   • Part C: {part_c_count} questions (10 marks each)
-- Spread questions across all the selected units and Bloom's Taxonomy levels.
-- Do NOT include answers.
-- Use LaTeX formatting only where absolutely necessary (e.g., equations, symbols, protocols).
+- Use ONLY the following selected chapters/units:
+{', '.join(selected_units)}
+- Spread questions according to this Bloom’s Taxonomy complexity distribution:
+{bloom_distribution_text}
+- Ensure each Bloom's level is distributed exactly as per the percentages provided for each part.
+- Distribute Bloom levels properly across all sections (A, B, C).
+- DO NOT provide answers.
 - Each section must start on a new line with the header format:
   Part A (2 marks each)
   Part B (6 marks each)
   Part C (10 marks each)
+- Use LaTeX formatting ONLY if necessary (for formulas/symbols).
 
-Use ONLY the following selected chapters/units:
-{', '.join(selected_units)}
-
-Return ONLY the formatted exam content as plain text. Do not include explanations, code, markdown, or JSON.
+Output:
+- ONLY the formatted question paper as plain text.
+- No extra explanations, markdown, or JSON.
 '''
+    }
+
+    query = {
+        "input": input_query,
+        "retrieveAndGenerateConfiguration": {
+            "type": "KNOWLEDGE_BASE",
+            "knowledgeBaseConfiguration": {
+                "knowledgeBaseId": knowledge_base_id,
+                "modelArn": model_arn2
+            }
+        }
+    }
+
+    try:
+        response = bedrock_agent_runtime.retrieve_and_generate(**query)
+        return response.get('output', {}).get('text', "").strip()
+    except Exception as e:
+        st.error(f"❌ Error generating questions: {str(e)}")
+        return ""
+
+# ---------- Answer Generator ----------
+import streamlit as st
+
+def generate_answers_for_questions(subject, questions_text, knowledge_base_id, model_arn):
+    input_query = {
+        "text": f'''
+    You are an expert academician.
+
+    Using the **uploaded textbook material** for "{subject}", generate a detailed answer key for the following exam questions.
+
+    Instructions:
+    - Keep answers clear, precise, and concise.
+    - Organize answer sections the same as question sections (Part A, Part B, Part C).
+    - Maintain the same question numbering.
+    - Use LaTeX formatting where needed (math, equations, etc.).
+
+    Follow this format for answers:
+
+    Part A: Short Answer Questions
+
+    [Question 1]
+    Answer: [Short answer here]
+
+    [Question 2]
+    Answer: [Short answer here]
+
+    etc...
+
+    Part B: Long Answer Questions
+
+    [Question 6]
+    Answer: [Answer here]
+
+    [Question 7]
+    Answer: [Answer here]
+
+    etc...
+
+    Part C: Application-Based Questions
+
+    [Question 10]
+    Answer: [Answer here]
+
+    etc...
+
+    Questions:
+    {questions_text}
+
+    Output:
+    - ONLY answers clearly organized by parts and numbering.
+    - Every answer must start with a new line.
+    '''
     }
 
     query = {
@@ -140,25 +212,22 @@ Return ONLY the formatted exam content as plain text. Do not include explanation
     }
 
     try:
+        # Call to Bedrock to retrieve and generate the answers
         response = bedrock_agent_runtime.retrieve_and_generate(**query)
+        
+        # Extract and return the generated output text
         return response.get('output', {}).get('text', "").strip()
     except Exception as e:
-        st.error(f"❌ Error generating questions: {str(e)}")
-        return ""
+        # Error handling if the API call fails
+        st.error(f"❌ Error generating answers: {str(e)}")
+        return ""  # Return an empty string or handle it as needed
 
-# ---------- Streamlit UI ----------
+# ---------- Streamlit Frontend ----------
 def main():
-    st.set_page_config(page_title="🎓 Question Paper Generator", layout="centered")
+    st.set_page_config(page_title="🎓 Question Paper Generator + Answer Key", layout="wide")
 
-    st.markdown("""
+    st.markdown(""" 
         <style>
-        .centered-title {
-            font-size: 36px !important;
-            text-align: center;
-            margin-bottom: 30px;
-            font-weight: bold;
-            color: #004085;
-        }
         .stButton>button {
             width: 100%;
         }
@@ -171,73 +240,118 @@ def main():
         }
         .footer {
             text-align:center;
-            margin-top: 50px;
+            margin-top: 30px;
             font-size: 13px;
             color: #999;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="centered-title">📘 AI-Driven University Question Paper Generator</div>', unsafe_allow_html=True)
+    st.title("📘 AI-Driven University Question Paper & Answer Key Generator")
 
     if "units" not in st.session_state:
         st.session_state.units = []
     if "units_fetched" not in st.session_state:
         st.session_state.units_fetched = False
+    if "paper" not in st.session_state:
+        st.session_state.paper = ""
+    if "answers" not in st.session_state:
+        st.session_state.answers = ""
 
-    subject = st.text_input("📚 Enter Subject Name")
+    left_col, right_col = st.columns([1.2, 1.8])
 
-    if subject and not st.session_state.units_fetched:
-        if st.button("🔍 Extract Chapters/Units"):
-            with st.spinner("Fetching chapters from knowledge base..."):
-                units = extract_units_from_knowledge_base(subject)
-                if units:
-                    st.session_state.units = units
-                    st.session_state.units_fetched = True
-                    st.success("✅ Units extracted successfully!")
-                else:
-                    st.warning("⚠️ No units found.")
+    with left_col:
+        subject = st.text_input("📚 Enter Subject Name")
 
-    if st.session_state.units:
-        st.markdown("### 📦 Select Chapters/Units")
-        selected_units = []
+        if subject and not st.session_state.units_fetched:
+            if st.button("🔍 Extract Chapters/Units"):
+                with st.spinner("Fetching chapters from knowledge base..."):
+                    units = extract_units_from_knowledge_base(subject)
+                    if units:
+                        st.session_state.units = units
+                        st.session_state.units_fetched = True
+                        st.success("✅ Units extracted successfully!")
+                    else:
+                        st.warning("⚠️ No units found.")
 
-        for i, unit in enumerate(st.session_state.units):
-            col1, col2 = st.columns([6, 1])
-            col1.markdown(f'<div class="unit-box">{unit}</div>', unsafe_allow_html=True)
-            if col2.checkbox("Select", key=f"unit_{i}", label_visibility="collapsed"):
-                selected_units.append(unit)
+        if st.session_state.units:
+            st.markdown("### 📦 Select Chapters/Units")
+            selected_units = []
 
-        if selected_units:
+            for i, unit in enumerate(st.session_state.units):
+                col1, col2 = st.columns([6, 1])
+                col1.markdown(f'<div class="unit-box">{unit}</div>', unsafe_allow_html=True)
+                if col2.checkbox("Select", key=f"unit_{i}", label_visibility="collapsed"):
+                    selected_units.append(unit)
+
+    with right_col:
+        if "units" in st.session_state and st.session_state.units:
             st.markdown("### ✍️ Define Question Structure")
+
             with st.form("question_form"):
                 col1, col2, col3 = st.columns(3)
                 part_a = col1.number_input("Part A (2 marks)", 1, 20, 10)
                 part_b = col2.number_input("Part B (6 marks)", 1, 20, 5)
                 part_c = col3.number_input("Part C (10 marks)", 0, 10, 2)
+
+                st.markdown("### 🧠 Bloom’s Taxonomy Distribution (%)")
+                bloom_levels = ["Remember", "Understand", "Apply", "Analyze", "Evaluate", "Create"]
+                bloom_distribution = {}
+                total_percentage = 0
+
+                for level in bloom_levels:
+                    bloom_distribution[level] = st.number_input(f"{level} (%)", min_value=0, max_value=100, value=0)
+                    total_percentage += bloom_distribution[level]
+
                 generate = st.form_submit_button("🚀 Generate Question Paper")
 
             if generate:
-                with st.spinner("Generating paper..."):
-                    paper = generate_exam_questions(subject, selected_units, part_a, part_b, part_c)
-                    paper = fix_section_formatting(paper)
+                if not selected_units:
+                    st.error("❌ Please select at least one unit from the left panel.")
+                elif total_percentage != 100:
+                    st.error("❌ Bloom's Taxonomy percentages must sum to 100%.")
+                else:
+                    bloom_distribution_text = "\n".join([f"{level}: {percentage}%" for level, percentage in bloom_distribution.items()])
+                    with st.spinner("Generating question paper..."):
+                        questions = generate_exam_questions(subject, selected_units, part_a, part_b, part_c, bloom_distribution_text)
+                        if questions:
+                            st.session_state.paper = questions
 
-                if paper:
-                    st.success("✅ Paper generated successfully!")
-                    st.markdown("### 📝 Preview")
-                    st.text_area("Generated Exam", paper, height=500)
+            if st.session_state.paper:
+                st.markdown("### 📑 Generated Question Paper")
+                st.text_area("Question Paper", st.session_state.paper, height=400, max_chars=3000)
 
-                    pdf = convert_text_to_pdf(subject, paper)
+                download_button = st.button("💾 Download Question Paper")
+                if download_button:
                     st.download_button(
-                        label="📥 Download as PDF",
-                        data=pdf,
-                        file_name=f"{subject.replace(' ', '_')}_Exam.pdf",
+                        label="Download Question Paper as PDF",
+                        data=convert_text_to_pdf(subject, st.session_state.paper),
+                        file_name=f"{subject}_Question_Paper.pdf",
                         mime="application/pdf"
                     )
-        else:
-            st.info("👉 Please select at least one chapter/unit to proceed.")
 
-    st.markdown('<div class="footer">© 2025 ExamGenAI • Powered by AWS Bedrock</div>', unsafe_allow_html=True)
+            if st.session_state.paper:
+                st.markdown("### 🧑‍🏫 Generate Answer Key")
+
+                generate_answer = st.button("🚀 Generate Answer Key")
+                if generate_answer:
+                    with st.spinner("Generating answers..."):
+                        answers = generate_answers_for_questions(subject, st.session_state.paper)
+                        st.session_state.answers = answers
+
+                if st.session_state.answers:
+                    st.markdown("### 📝 Generated Answer Key")
+                    st.text_area("Answer Key", st.session_state.answers, height=400)
+
+                    st.download_button(
+                        label="Download Answer Key as PDF",
+                        data=convert_text_to_pdf(subject, st.session_state.answers),
+                        file_name=f"{subject}_Answer_Key.pdf",
+                        mime="application/pdf"
+                    )
+
+    st.markdown("### 💡 Notes: Please make sure you have valid AWS credentials.")
+    st.markdown('<p class="footer">Built with ❤️ by Your Dev Team</p>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
